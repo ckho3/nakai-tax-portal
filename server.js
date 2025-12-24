@@ -19,14 +19,18 @@ const PORT = 1919;
 app.use(express.json());
 
 // アップロードディレクトリの設定
-const uploadDir = path.join(__dirname, 'uploads');
-const outputDir = path.join(__dirname, 'output');
+// Vercel環境では /tmp ディレクトリを使用、ローカルでは通常のディレクトリを使用
+const isVercel = process.env.VERCEL === '1';
+const uploadDir = isVercel ? '/tmp/uploads' : path.join(__dirname, 'uploads');
+const outputDir = isVercel ? '/tmp/output' : path.join(__dirname, 'output');
 
 // ディレクトリ作成
 (async () => {
   try {
     await fs.mkdir(uploadDir, { recursive: true });
     await fs.mkdir(outputDir, { recursive: true });
+    console.log(`アップロードディレクトリ: ${uploadDir}`);
+    console.log(`出力ディレクトリ: ${outputDir}`);
   } catch (err) {
     console.error('ディレクトリ作成エラー:', err);
   }
