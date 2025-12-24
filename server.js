@@ -60,12 +60,21 @@ const upload = multer({
 });
 
 // 静的ファイルの提供
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 app.use('/output', express.static(outputDir));
 
 // ルート
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// 静的ファイル用の明示的なルート（Vercel用）
+app.get('/style.css', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'style.css'));
+});
+
+app.get('/script.js', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'script.js'));
 });
 
 // PDFアップロードとExcel更新エンドポイント
