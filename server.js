@@ -598,6 +598,7 @@ app.post('/process-next', async (req, res) => {
     );
 
     const outputPath = result.outputPath;
+    const outputFilename = result.outputFilename;
     console.log(`[Job ${jobId}] Excel更新完了:`, outputPath);
 
     // 一時ファイルのクリーンアップ（pathが文字列の場合のみ）

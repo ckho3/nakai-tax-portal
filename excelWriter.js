@@ -1239,6 +1239,7 @@ async function updateExcel(excelPath, pdfDataArray, itemMapping = {}, settlement
     return {
       success: true,
       outputPath,
+      outputFilename,
       results
     };
 
