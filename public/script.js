@@ -219,11 +219,11 @@ uploadBtn.addEventListener('click', async () => {
     const jobId = uploadResult.jobId;
 
     console.log(`ジョブID: ${jobId}`);
-    progressFill.style.width = '10%';
-    progressText.textContent = '処理を開始しました...';
+    progressFill.style.width = '5%';
+    progressText.textContent = '処理を開始します...';
 
-    // 2. ジョブのステータスをポーリング
-    await pollJobStatus(jobId);
+    // 2. 1件ずつ処理を実行（SPX_202508パターン）
+    await processAllItems(jobId);
 
   } catch (error) {
     console.error('エラー:', error);
@@ -233,35 +233,46 @@ uploadBtn.addEventListener('click', async () => {
   }
 });
 
-// ジョブステータスをポーリング
-async function pollJobStatus(jobId) {
-  const pollInterval = 1000; // 1秒ごとにチェック
-  const maxAttempts = 600; // 最大10分
+// 1件ずつ処理を実行（SPX_202508パターン）
+async function processAllItems(jobId) {
+  let completed = false;
   let attempts = 0;
+  const maxAttempts = 1000; // 最大1000回（安全のため）
 
-  const poll = async () => {
+  while (!completed && attempts < maxAttempts) {
     attempts++;
 
-    if (attempts > maxAttempts) {
-      throw new Error('処理がタイムアウトしました');
-    }
-
     try {
-      const statusResponse = await fetch(`/job-status/${jobId}`);
+      const response = await fetch('/process-next', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ jobId })
+      });
 
-      if (!statusResponse.ok) {
-        throw new Error('ステータス取得に失敗しました');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '処理に失敗しました');
       }
 
-      const status = await statusResponse.json();
-      console.log(`ジョブステータス: ${status.status} (${status.progress}%) - ${status.message}`);
+      const result = await response.json();
 
       // 進捗を更新
-      progressFill.style.width = `${status.progress}%`;
-      progressText.textContent = status.message;
+      if (result.progress) {
+        progressFill.style.width = `${result.progress.percentage}%`;
+        progressText.textContent = result.progress.message;
+        console.log(`進捗: ${result.progress.current}/${result.progress.total} (${result.progress.percentage}%)`);
+      }
 
-      if (status.status === 'completed') {
-        // 完了
+      // エラーがあればログに出力
+      if (result.error) {
+        console.warn('処理エラー:', result.error);
+      }
+
+      // 完了チェック
+      if (result.completed) {
+        completed = true;
         progressFill.style.width = '100%';
         progressText.textContent = '処理完了！ファイルをダウンロード中...';
 
@@ -274,24 +285,22 @@ async function pollJobStatus(jobId) {
           displaySuccess('Excelファイルの更新が完了しました！');
           uploadBtn.disabled = false;
         }, 1000);
+      }
 
-      } else if (status.status === 'failed') {
-        // 失敗
-        throw new Error(status.error || '処理に失敗しました');
-
-      } else {
-        // まだ処理中 - 次のポーリング
-        setTimeout(poll, pollInterval);
+      // 少し待機してから次の処理（サーバー負荷軽減）
+      if (!completed) {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
 
     } catch (error) {
-      console.error('ポーリングエラー:', error);
+      console.error('処理エラー:', error);
       throw error;
     }
-  };
+  }
 
-  // ポーリング開始
-  await poll();
+  if (attempts >= maxAttempts) {
+    throw new Error('処理が最大試行回数を超えました');
+  }
 }
 
 // 結果をダウンロード

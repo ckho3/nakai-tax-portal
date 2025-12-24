@@ -252,6 +252,348 @@ app.get('/download/:jobId', async (req, res) => {
   }
 });
 
+// 1件ずつ処理するエンドポイント（Vercel対応）
+app.post('/process-next', async (req, res) => {
+  try {
+    const { jobId } = req.body;
+
+    if (!jobId) {
+      return res.status(400).json({ error: 'jobId is required' });
+    }
+
+    // ジョブ情報を取得
+    const job = await jobManager.getJob(jobId);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // 処理状態チェック
+    if (job.status === 'completed') {
+      return res.status(200).json({
+        success: true,
+        completed: true,
+        message: 'Job already completed'
+      });
+    }
+
+    if (job.status === 'failed') {
+      return res.status(400).json({ error: 'Job has failed' });
+    }
+
+    const {
+      pdfFiles,
+      settlementFiles = [],
+      transferFiles = [],
+      pdfPathsMap = {},
+      settlementPathsMap = {},
+      transferPathsMap = {},
+      itemMapping = {}
+    } = job.data;
+
+    // 現在の処理インデックス
+    const currentPdfIndex = job.progress || 0;
+    const currentSettlementIndex = job.settlementProgress || 0;
+    const currentTransferIndex = job.transferProgress || 0;
+
+    // 初期化
+    if (!job.pdfResults) {
+      await jobManager.updateJob(jobId, {
+        status: 'processing',
+        pdfResults: [],
+        settlementResults: [],
+        transferResults: [],
+        parseErrors: []
+      });
+    }
+
+    // Step 1: 年間収支一覧表PDFを1件処理
+    if (currentPdfIndex < pdfFiles.length) {
+      const pdfFile = pdfFiles[currentPdfIndex];
+
+      try {
+        const pdfBuffer = await fs.readFile(pdfFile.path);
+        const pdfData = await parsePDF(pdfBuffer);
+        const filename = Buffer.from(pdfFile.originalname, 'latin1').toString('utf8');
+        const decodedOriginalName = Buffer.from(pdfFile.originalname, 'latin1').toString('utf8');
+        const folderPath = pdfPathsMap[decodedOriginalName] || '';
+
+        const pdfResults = job.pdfResults || [];
+        pdfResults.push({
+          ...pdfData,
+          filename: filename,
+          folderPath: folderPath
+        });
+
+        const progressPercent = Math.round(((currentPdfIndex + 1) / pdfFiles.length) * 30);
+
+        await jobManager.updateJob(jobId, {
+          progress: currentPdfIndex + 1,
+          pdfResults,
+          message: `年間収支一覧表を解析中 (${currentPdfIndex + 1}/${pdfFiles.length})...`
+        });
+
+        return res.json({
+          success: true,
+          completed: false,
+          nextStep: 'pdf',
+          progress: {
+            current: currentPdfIndex + 1,
+            total: pdfFiles.length + settlementFiles.length + transferFiles.length,
+            percentage: progressPercent,
+            message: `年間収支一覧表を解析中 (${currentPdfIndex + 1}/${pdfFiles.length})...`
+          }
+        });
+
+      } catch (error) {
+        const filename = Buffer.from(pdfFile.originalname, 'latin1').toString('utf8');
+        const parseErrors = job.parseErrors || [];
+        parseErrors.push({
+          filename,
+          error: error.message
+        });
+
+        await jobManager.updateJob(jobId, {
+          progress: currentPdfIndex + 1,
+          parseErrors
+        });
+
+        return res.json({
+          success: true,
+          completed: false,
+          nextStep: 'pdf',
+          error: `${filename}: ${error.message}`,
+          progress: {
+            current: currentPdfIndex + 1,
+            total: pdfFiles.length + settlementFiles.length + transferFiles.length,
+            percentage: Math.round(((currentPdfIndex + 1) / pdfFiles.length) * 30),
+            message: `年間収支一覧表を解析中 (${currentPdfIndex + 1}/${pdfFiles.length})...`
+          }
+        });
+      }
+    }
+
+    // Step 2: 決済明細書PDFを1件処理
+    if (currentSettlementIndex < settlementFiles.length) {
+      const settlementFile = settlementFiles[currentSettlementIndex];
+
+      try {
+        const originalFilename = Buffer.from(settlementFile.originalname, 'latin1').toString('utf8');
+        const decodedOriginalName = Buffer.from(settlementFile.originalname, 'latin1').toString('utf8');
+        const folderPath = settlementPathsMap[decodedOriginalName] || '';
+
+        const settlementBuffer = await fs.readFile(settlementFile.path);
+        const propertyData = await parseSettlementPDF(
+          settlementBuffer,
+          originalFilename,
+          folderPath
+        );
+
+        if (propertyData) {
+          const settlementResults = job.settlementResults || [];
+          settlementResults.push(propertyData);
+
+          await jobManager.updateJob(jobId, {
+            settlementProgress: currentSettlementIndex + 1,
+            settlementResults
+          });
+        }
+
+        const totalProgress = pdfFiles.length + currentSettlementIndex + 1;
+        const totalItems = pdfFiles.length + settlementFiles.length + transferFiles.length;
+        const progressPercent = 30 + Math.round(((currentSettlementIndex + 1) / settlementFiles.length) * 20);
+
+        return res.json({
+          success: true,
+          completed: false,
+          nextStep: 'settlement',
+          progress: {
+            current: totalProgress,
+            total: totalItems,
+            percentage: progressPercent,
+            message: `決済明細書を解析中 (${currentSettlementIndex + 1}/${settlementFiles.length})...`
+          }
+        });
+
+      } catch (error) {
+        const filename = Buffer.from(settlementFile.originalname, 'latin1').toString('utf8');
+
+        await jobManager.updateJob(jobId, {
+          settlementProgress: currentSettlementIndex + 1
+        });
+
+        return res.json({
+          success: true,
+          completed: false,
+          nextStep: 'settlement',
+          error: `${filename}: ${error.message}`,
+          progress: {
+            current: pdfFiles.length + currentSettlementIndex + 1,
+            total: pdfFiles.length + settlementFiles.length + transferFiles.length,
+            percentage: 30 + Math.round(((currentSettlementIndex + 1) / settlementFiles.length) * 20),
+            message: `決済明細書を解析中 (${currentSettlementIndex + 1}/${settlementFiles.length})...`
+          }
+        });
+      }
+    }
+
+    // Step 3: 譲渡対価証明書PDFを1件処理
+    if (currentTransferIndex < transferFiles.length) {
+      const transferFile = transferFiles[currentTransferIndex];
+
+      try {
+        const originalFilename = Buffer.from(transferFile.originalname, 'latin1').toString('utf8');
+        const decodedOriginalName = Buffer.from(transferFile.originalname, 'latin1').toString('utf8');
+        const folderPath = transferPathsMap[decodedOriginalName] || '';
+
+        const transferBuffer = await fs.readFile(transferFile.path);
+        const transferData = await parseTransferPDF(
+          transferBuffer,
+          originalFilename,
+          folderPath
+        );
+
+        if (transferData) {
+          const transferResults = job.transferResults || [];
+          transferResults.push(transferData);
+
+          await jobManager.updateJob(jobId, {
+            transferProgress: currentTransferIndex + 1,
+            transferResults
+          });
+        }
+
+        const totalProgress = pdfFiles.length + settlementFiles.length + currentTransferIndex + 1;
+        const totalItems = pdfFiles.length + settlementFiles.length + transferFiles.length;
+        const progressPercent = 50 + Math.round(((currentTransferIndex + 1) / transferFiles.length) * 20);
+
+        return res.json({
+          success: true,
+          completed: false,
+          nextStep: 'transfer',
+          progress: {
+            current: totalProgress,
+            total: totalItems,
+            percentage: progressPercent,
+            message: `譲渡対価証明書を解析中 (${currentTransferIndex + 1}/${transferFiles.length})...`
+          }
+        });
+
+      } catch (error) {
+        const filename = Buffer.from(transferFile.originalname, 'latin1').toString('utf8');
+
+        await jobManager.updateJob(jobId, {
+          transferProgress: currentTransferIndex + 1
+        });
+
+        return res.json({
+          success: true,
+          completed: false,
+          nextStep: 'transfer',
+          error: `${filename}: ${error.message}`,
+          progress: {
+            current: pdfFiles.length + settlementFiles.length + currentTransferIndex + 1,
+            total: pdfFiles.length + settlementFiles.length + transferFiles.length,
+            percentage: 50 + Math.round(((currentTransferIndex + 1) / transferFiles.length) * 20),
+            message: `譲渡対価証明書を解析中 (${currentTransferIndex + 1}/${transferFiles.length})...`
+          }
+        });
+      }
+    }
+
+    // Step 4: 全件処理完了 → Excelファイル生成
+    console.log(`[Job ${jobId}] すべてのPDF処理完了。Excelファイルを生成中...`);
+
+    const pdfResults = job.pdfResults || [];
+    const settlementResults = job.settlementResults || [];
+    const transferResults = job.transferResults || [];
+
+    if (pdfResults.length === 0) {
+      await jobManager.failJob(jobId, new Error('すべてのPDFファイルの解析に失敗しました'));
+      return res.status(400).json({
+        error: 'すべてのPDFファイルの解析に失敗しました'
+      });
+    }
+
+    // Excel更新
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const outputFilename = `年間収支一覧表_更新済_${timestamp}.xlsx`;
+    const outputPath = path.join(outputDir, outputFilename);
+
+    await updateExcel(
+      job.data.excelPath,
+      pdfResults,
+      outputPath,
+      itemMapping,
+      settlementResults,
+      transferResults
+    );
+
+    // 一時ファイルのクリーンアップ
+    for (const pdfFile of pdfFiles) {
+      try {
+        await fs.unlink(pdfFile.path);
+      } catch (error) {
+        console.error(`ファイル削除エラー:`, error);
+      }
+    }
+
+    for (const settlementFile of settlementFiles) {
+      try {
+        await fs.unlink(settlementFile.path);
+      } catch (error) {
+        console.error(`ファイル削除エラー:`, error);
+      }
+    }
+
+    for (const transferFile of transferFiles) {
+      try {
+        await fs.unlink(transferFile.path);
+      } catch (error) {
+        console.error(`ファイル削除エラー:`, error);
+      }
+    }
+
+    try {
+      await fs.unlink(job.data.excelPath);
+    } catch (error) {
+      console.error(`Excelファイル削除エラー:`, error);
+    }
+
+    // ジョブ完了
+    await jobManager.completeJob(jobId, outputPath);
+
+    return res.json({
+      success: true,
+      completed: true,
+      outputPath,
+      outputFilename,
+      progress: {
+        current: pdfFiles.length + settlementFiles.length + transferFiles.length,
+        total: pdfFiles.length + settlementFiles.length + transferFiles.length,
+        percentage: 100,
+        message: '処理が完了しました'
+      },
+      stats: {
+        pdfCount: pdfResults.length,
+        settlementCount: settlementResults.length,
+        transferCount: transferResults.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Process next error:', error);
+
+    if (req.body.jobId) {
+      await jobManager.failJob(req.body.jobId, error);
+    }
+
+    res.status(500).json({
+      error: 'Processing failed',
+      details: error.message
+    });
+  }
+});
+
 // ========================================
 // 同期処理エンドポイント（既存のまま維持）
 // ========================================
