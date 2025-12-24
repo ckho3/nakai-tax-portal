@@ -584,20 +584,21 @@ app.post('/process-next', async (req, res) => {
       throw new Error(`Excelファイルが見つかりません: ${job.data.excelPath}`);
     }
 
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    const outputFilename = `年間収支一覧表_更新済_${timestamp}.xlsx`;
-    const outputPath = path.join(outputDir, outputFilename);
+    console.log(`[Job ${jobId}] Excel更新を開始します`);
 
-    console.log(`[Job ${jobId}] 出力パス:`, outputPath);
-
-    await updateExcel(
+    // updateExcelの正しい引数順序:
+    // (excelPath, pdfDataArray, itemMapping, settlementFileNames, propertiesData, folderName)
+    const result = await updateExcel(
       job.data.excelPath,
       pdfResults,
-      outputPath,
       itemMapping,
+      [],  // settlementFileNames (不要、空配列)
       settlementResults,
-      transferResults
+      ''   // folderName (空文字列)
     );
+
+    const outputPath = result.outputPath;
+    console.log(`[Job ${jobId}] Excel更新完了:`, outputPath);
 
     // 一時ファイルのクリーンアップ（pathが文字列の場合のみ）
     for (const pdfFile of pdfFiles) {
