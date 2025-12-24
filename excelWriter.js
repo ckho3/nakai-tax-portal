@@ -1216,7 +1216,12 @@ async function updateExcel(excelPath, pdfDataArray, itemMapping = {}, settlement
     // 更新されたファイルを保存
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     const path = require('path');
-    const outputDir = path.join(__dirname, 'output');
+    const fs = require('fs').promises;
+    const isVercel = process.env.VERCEL === '1';
+    const outputDir = isVercel ? '/tmp/output' : path.join(__dirname, 'output');
+
+    // 出力ディレクトリが存在することを確認
+    await fs.mkdir(outputDir, { recursive: true });
 
     // フォルダ名がある場合は「フォルダ名_R7確定申告_updated_タイムスタンプ.xlsx」
     // ない場合は従来通り
