@@ -150,20 +150,17 @@ function checkUploadButton() {
   }
 }
 
-// アップロード処理
+// アップロード処理（非同期版）
 uploadBtn.addEventListener('click', async () => {
   // UIをリセット
   progressSection.style.display = 'block';
   resultSection.style.display = 'none';
   progressFill.style.width = '0%';
-  progressText.textContent = '年間収支一覧表PDFを解析しています...';
+  progressText.textContent = 'ファイルをアップロード中...';
   uploadBtn.disabled = true;
 
   try {
-    let annualIncomeResult = null;
-    let settlementResult = null;
-
-    // 1. 年間収支一覧表PDFの処理
+    // 1. ファイルをアップロードしてジョブを開始
     const formData = new FormData();
     formData.append('excel', excelFile);
 
@@ -204,35 +201,29 @@ uploadBtn.addEventListener('click', async () => {
     formData.append('settlementPaths', JSON.stringify(settlementPathsMap));
     formData.append('transferPaths', JSON.stringify(transferPathsMap));
 
-    progressFill.style.width = '20%';
+    progressFill.style.width = '5%';
+    progressText.textContent = 'サーバーにアップロード中...';
 
-    const response = await fetch('/upload', {
+    // 非同期エンドポイントを使用
+    const uploadResponse = await fetch('/upload-async', {
       method: 'POST',
       body: formData
     });
 
-    progressFill.style.width = '50%';
-    progressText.textContent = 'Excelファイルを更新しています...';
-
-    annualIncomeResult = await response.json();
-
-    // 未知の項目がある場合
-    if (annualIncomeResult.needsMapping) {
-      progressSection.style.display = 'none';
-      showMappingDialog(annualIncomeResult.unknownItems, annualIncomeResult.tempId);
-      uploadBtn.disabled = false;
-      return;
+    if (!uploadResponse.ok) {
+      const errorData = await uploadResponse.json();
+      throw new Error(errorData.error || 'アップロードに失敗しました');
     }
 
-    progressFill.style.width = '100%';
-    progressText.textContent = '処理完了！';
+    const uploadResult = await uploadResponse.json();
+    const jobId = uploadResult.jobId;
 
-    // 結果を表示
-    setTimeout(() => {
-      progressSection.style.display = 'none';
-      displayCombinedResult(annualIncomeResult, null);
-      uploadBtn.disabled = false;
-    }, 1000);
+    console.log(`ジョブID: ${jobId}`);
+    progressFill.style.width = '10%';
+    progressText.textContent = '処理を開始しました...';
+
+    // 2. ジョブのステータスをポーリング
+    await pollJobStatus(jobId);
 
   } catch (error) {
     console.error('エラー:', error);
@@ -241,6 +232,97 @@ uploadBtn.addEventListener('click', async () => {
     uploadBtn.disabled = false;
   }
 });
+
+// ジョブステータスをポーリング
+async function pollJobStatus(jobId) {
+  const pollInterval = 1000; // 1秒ごとにチェック
+  const maxAttempts = 600; // 最大10分
+  let attempts = 0;
+
+  const poll = async () => {
+    attempts++;
+
+    if (attempts > maxAttempts) {
+      throw new Error('処理がタイムアウトしました');
+    }
+
+    try {
+      const statusResponse = await fetch(`/job-status/${jobId}`);
+
+      if (!statusResponse.ok) {
+        throw new Error('ステータス取得に失敗しました');
+      }
+
+      const status = await statusResponse.json();
+      console.log(`ジョブステータス: ${status.status} (${status.progress}%) - ${status.message}`);
+
+      // 進捗を更新
+      progressFill.style.width = `${status.progress}%`;
+      progressText.textContent = status.message;
+
+      if (status.status === 'completed') {
+        // 完了
+        progressFill.style.width = '100%';
+        progressText.textContent = '処理完了！ファイルをダウンロード中...';
+
+        // ダウンロード
+        await downloadResult(jobId);
+
+        // 成功メッセージを表示
+        setTimeout(() => {
+          progressSection.style.display = 'none';
+          displaySuccess('Excelファイルの更新が完了しました！');
+          uploadBtn.disabled = false;
+        }, 1000);
+
+      } else if (status.status === 'failed') {
+        // 失敗
+        throw new Error(status.error || '処理に失敗しました');
+
+      } else {
+        // まだ処理中 - 次のポーリング
+        setTimeout(poll, pollInterval);
+      }
+
+    } catch (error) {
+      console.error('ポーリングエラー:', error);
+      throw error;
+    }
+  };
+
+  // ポーリング開始
+  await poll();
+}
+
+// 結果をダウンロード
+async function downloadResult(jobId) {
+  try {
+    const downloadUrl = `/download/${jobId}`;
+
+    // ダウンロードリンクを作成してクリック
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = ''; // サーバー側のファイル名を使用
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    console.log('ダウンロード開始:', downloadUrl);
+  } catch (error) {
+    console.error('ダウンロードエラー:', error);
+    throw error;
+  }
+}
+
+// 成功メッセージを表示
+function displaySuccess(message) {
+  resultSection.style.display = 'block';
+  resultSection.innerHTML = `
+    <h3>✅ 処理完了</h3>
+    <div class="success-message">${message}</div>
+    <p>ダウンロードが開始されない場合は、ブラウザの設定を確認してください。</p>
+  `;
+}
 
 // 未知の項目の分類を聞くダイアログを表示
 function showMappingDialog(unknownItems, tempId) {

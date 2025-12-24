@@ -32,5 +32,6 @@ dist-ssr
 # Project specific
 uploads/
 output/
+jobs/
 *.xlsx
 *.pdf

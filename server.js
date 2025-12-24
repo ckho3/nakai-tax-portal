@@ -11,8 +11,12 @@ const { writeNewProperties } = require('./newPropertyWriter');
 delete require.cache[require.resolve('./transferWriter')];
 const { writeTransferDates } = require('./transferWriter');
 const { copyDepreciationData } = require('./depreciationCopier');
+const { AsyncProcessor } = require('./asyncProcessor');
+const { JobManager } = require('./jobManager');
 
 const app = express();
+const asyncProcessor = new AsyncProcessor();
+const jobManager = new JobManager();
 const PORT = 1919;
 
 // JSONボディパーサーを追加
@@ -76,6 +80,181 @@ app.get('/style.css', (req, res) => {
 app.get('/script.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'script.js'));
 });
+
+// ========================================
+// 非同期処理エンドポイント
+// ========================================
+
+// 非同期アップロードエンドポイント（即座にjobIdを返す）
+app.post('/upload-async', upload.fields([
+  { name: 'pdfs', maxCount: 50 },
+  { name: 'excel', maxCount: 1 },
+  { name: 'settlements', maxCount: 50 },
+  { name: 'transfers', maxCount: 50 }
+]), async (req, res) => {
+  try {
+    const pdfFiles = req.files['pdfs'];
+    const excelFile = req.files['excel'] ? req.files['excel'][0] : null;
+    const settlementFiles = req.files['settlements'] || [];
+    const transferFiles = req.files['transfers'] || [];
+
+    // フォルダパス情報を取得
+    const pdfPathsMap = req.body.pdfPaths ? JSON.parse(req.body.pdfPaths) : {};
+    const settlementPathsMap = req.body.settlementPaths ? JSON.parse(req.body.settlementPaths) : {};
+    const transferPathsMap = req.body.transferPaths ? JSON.parse(req.body.transferPaths) : {};
+
+    if (!pdfFiles || pdfFiles.length === 0) {
+      return res.status(400).json({ error: 'PDFファイルがアップロードされていません' });
+    }
+
+    if (!excelFile) {
+      return res.status(400).json({ error: 'Excelファイルがアップロードされていません' });
+    }
+
+    // 項目マッピングを読み込み
+    const mappingPath = path.join(__dirname, 'item-mapping.json');
+    let itemMapping = {};
+    try {
+      const mappingData = await fs.readFile(mappingPath, 'utf8');
+      itemMapping = JSON.parse(mappingData);
+    } catch (error) {
+      console.log('item-mapping.jsonが見つかりません。デフォルトマッピングを使用します。');
+      itemMapping = {
+        '管理手数料': 'B',
+        '宣伝広告費': 'C',
+        '設備交換費': 'D'
+      };
+    }
+
+    // ジョブを作成
+    const job = await jobManager.createJob({
+      pdfFiles: pdfFiles,
+      excelPath: excelFile.path,
+      settlementFiles: settlementFiles,
+      transferFiles: transferFiles,
+      pdfPathsMap,
+      settlementPathsMap,
+      transferPathsMap,
+      itemMapping
+    });
+
+    console.log(`非同期ジョブ作成: ${job.id}`);
+    console.log(`- PDFファイル: ${pdfFiles.length}件`);
+    console.log(`- 決済明細書: ${settlementFiles.length}件`);
+    console.log(`- 譲渡対価証明書: ${transferFiles.length}件`);
+
+    // バックグラウンドで処理を開始（ノンブロッキング）
+    asyncProcessor.startJob(job.id);
+
+    // 即座にjobIdを返す
+    res.json({
+      success: true,
+      jobId: job.id,
+      message: 'ジョブを受け付けました。処理を開始しています...'
+    });
+  } catch (error) {
+    console.error('非同期アップロードエラー:', error);
+    res.status(500).json({
+      error: 'アップロードエラーが発生しました',
+      message: error.message
+    });
+  }
+});
+
+// ジョブステータス確認エンドポイント
+app.get('/job-status/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const job = await jobManager.getJob(jobId);
+
+    if (!job) {
+      return res.status(404).json({
+        error: 'ジョブが見つかりません',
+        jobId
+      });
+    }
+
+    res.json({
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+      message: job.message,
+      error: job.error,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt
+    });
+  } catch (error) {
+    console.error('ジョブステータス取得エラー:', error);
+    res.status(500).json({
+      error: 'ステータス取得エラー',
+      message: error.message
+    });
+  }
+});
+
+// 結果ダウンロードエンドポイント
+app.get('/download/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const job = await jobManager.getJob(jobId);
+
+    if (!job) {
+      return res.status(404).json({
+        error: 'ジョブが見つかりません',
+        jobId
+      });
+    }
+
+    if (job.status !== 'completed') {
+      return res.status(400).json({
+        error: 'ジョブがまだ完了していません',
+        status: job.status,
+        progress: job.progress
+      });
+    }
+
+    if (!job.resultPath) {
+      return res.status(404).json({
+        error: '結果ファイルが見つかりません'
+      });
+    }
+
+    // ファイルが存在するか確認
+    try {
+      await fs.access(job.resultPath);
+    } catch (error) {
+      return res.status(404).json({
+        error: '結果ファイルが見つかりません',
+        message: 'ファイルが削除された可能性があります'
+      });
+    }
+
+    // ファイル名を取得
+    const filename = path.basename(job.resultPath);
+
+    res.download(job.resultPath, filename, (error) => {
+      if (error) {
+        console.error('ダウンロードエラー:', error);
+        if (!res.headersSent) {
+          res.status(500).json({
+            error: 'ダウンロードエラー',
+            message: error.message
+          });
+        }
+      }
+    });
+  } catch (error) {
+    console.error('ダウンロードエラー:', error);
+    res.status(500).json({
+      error: 'ダウンロードエラー',
+      message: error.message
+    });
+  }
+});
+
+// ========================================
+// 同期処理エンドポイント（既存のまま維持）
+// ========================================
 
 // PDFアップロードとExcel更新エンドポイント
 app.post('/upload', upload.fields([
