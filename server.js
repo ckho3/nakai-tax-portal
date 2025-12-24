@@ -11,11 +11,9 @@ const { writeNewProperties } = require('./newPropertyWriter');
 delete require.cache[require.resolve('./transferWriter')];
 const { writeTransferDates } = require('./transferWriter');
 const { copyDepreciationData } = require('./depreciationCopier');
-const { AsyncProcessor } = require('./asyncProcessor');
 const { JobManager } = require('./jobManager');
 
 const app = express();
-const asyncProcessor = new AsyncProcessor();
 const jobManager = new JobManager();
 const PORT = 1919;
 
@@ -143,14 +141,11 @@ app.post('/upload-async', upload.fields([
     console.log(`- 決済明細書: ${settlementFiles.length}件`);
     console.log(`- 譲渡対価証明書: ${transferFiles.length}件`);
 
-    // バックグラウンドで処理を開始（ノンブロッキング）
-    asyncProcessor.startJob(job.id);
-
-    // 即座にjobIdを返す
+    // 即座にjobIdを返す（フロントエンドが /process-next を繰り返し呼び出す）
     res.json({
       success: true,
       jobId: job.id,
-      message: 'ジョブを受け付けました。処理を開始しています...'
+      message: 'ジョブを受け付けました。処理を開始してください。'
     });
   } catch (error) {
     console.error('非同期アップロードエラー:', error);
