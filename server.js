@@ -386,21 +386,36 @@ app.post('/process-next', async (req, res) => {
         const decodedOriginalName = Buffer.from(settlementFile.originalname, 'latin1').toString('utf8');
         const folderPath = settlementPathsMap[decodedOriginalName] || '';
 
-        // ファイルパスまたはBufferを取得
-        let settlementBuffer;
+        // ファイルパスを取得（pathがない場合は一時ファイルを作成）
+        let settlementPath;
+        let isTempFile = false;
+
         if (typeof settlementFile.path === 'string') {
-          settlementBuffer = await fs.readFile(settlementFile.path);
+          settlementPath = settlementFile.path;
         } else if (Buffer.isBuffer(settlementFile.buffer)) {
-          settlementBuffer = settlementFile.buffer;
+          // Bufferの場合は一時ファイルを作成
+          const tempPath = path.join(uploadDir, `temp_settlement_${Date.now()}.pdf`);
+          await fs.writeFile(tempPath, settlementFile.buffer);
+          settlementPath = tempPath;
+          isTempFile = true;
         } else {
           throw new Error('Invalid settlement PDF file format in job data');
         }
 
         const propertyData = await parseSettlementPDF(
-          settlementBuffer,
+          settlementPath,
           originalFilename,
           folderPath
         );
+
+        // 一時ファイルを削除
+        if (isTempFile) {
+          try {
+            await fs.unlink(settlementPath);
+          } catch (error) {
+            console.error('一時ファイル削除エラー:', error);
+          }
+        }
 
         if (propertyData) {
           const settlementResults = job.settlementResults || [];
@@ -459,21 +474,36 @@ app.post('/process-next', async (req, res) => {
         const decodedOriginalName = Buffer.from(transferFile.originalname, 'latin1').toString('utf8');
         const folderPath = transferPathsMap[decodedOriginalName] || '';
 
-        // ファイルパスまたはBufferを取得
-        let transferBuffer;
+        // ファイルパスを取得（pathがない場合は一時ファイルを作成）
+        let transferPath;
+        let isTempFile = false;
+
         if (typeof transferFile.path === 'string') {
-          transferBuffer = await fs.readFile(transferFile.path);
+          transferPath = transferFile.path;
         } else if (Buffer.isBuffer(transferFile.buffer)) {
-          transferBuffer = transferFile.buffer;
+          // Bufferの場合は一時ファイルを作成
+          const tempPath = path.join(uploadDir, `temp_transfer_${Date.now()}.pdf`);
+          await fs.writeFile(tempPath, transferFile.buffer);
+          transferPath = tempPath;
+          isTempFile = true;
         } else {
           throw new Error('Invalid transfer PDF file format in job data');
         }
 
         const transferData = await parseTransferPDF(
-          transferBuffer,
+          transferPath,
           originalFilename,
           folderPath
         );
+
+        // 一時ファイルを削除
+        if (isTempFile) {
+          try {
+            await fs.unlink(transferPath);
+          } catch (error) {
+            console.error('一時ファイル削除エラー:', error);
+          }
+        }
 
         if (transferData) {
           const transferResults = job.transferResults || [];
@@ -538,9 +568,27 @@ app.post('/process-next', async (req, res) => {
     }
 
     // Excel更新
+    console.log(`[Job ${jobId}] Excelパス確認:`, job.data.excelPath);
+    console.log(`[Job ${jobId}] Excelパスの型:`, typeof job.data.excelPath);
+
+    if (!job.data.excelPath || typeof job.data.excelPath !== 'string') {
+      throw new Error('Excelファイルのパスが不正です');
+    }
+
+    // Excelファイルの存在確認
+    try {
+      await fs.access(job.data.excelPath);
+      console.log(`[Job ${jobId}] Excelファイル存在確認OK`);
+    } catch (error) {
+      console.error(`[Job ${jobId}] Excelファイルが見つかりません:`, job.data.excelPath);
+      throw new Error(`Excelファイルが見つかりません: ${job.data.excelPath}`);
+    }
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     const outputFilename = `年間収支一覧表_更新済_${timestamp}.xlsx`;
     const outputPath = path.join(outputDir, outputFilename);
+
+    console.log(`[Job ${jobId}] 出力パス:`, outputPath);
 
     await updateExcel(
       job.data.excelPath,
