@@ -507,12 +507,17 @@ app.post('/upload-new-properties', upload.fields([
   }
 });
 
-// サーバー起動
-app.listen(PORT, () => {
-  console.log(`\n========================================`);
-  console.log(`中井ソリューションズ`);
-  console.log(`========================================`);
-  console.log(`サーバーが起動しました`);
-  console.log(`URL: http://localhost:${PORT}`);
-  console.log(`========================================\n`);
-});
+// サーバー起動（ローカル環境のみ）
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`\n========================================`);
+    console.log(`中井ソリューションズ`);
+    console.log(`========================================`);
+    console.log(`サーバーが起動しました`);
+    console.log(`URL: http://localhost:${PORT}`);
+    console.log(`========================================\n`);
+  });
+}
+
+// Vercel用にappをエクスポート
+module.exports = app;
