@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>中井ソリューションズ</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📄 中井ソリューションズ</h1>
+      <p class="subtitle">年間収支一覧表PDFを自動的にExcelに転記します</p>
+    </header>
+
+    <main>
+      <div class="upload-section">
+        <div class="upload-box">
+          <h2>1. Excelファイルをアップロード</h2>
+          <div class="file-input-wrapper">
+            <input type="file" id="excelInput" accept=".xlsx" />
+            <label for="excelInput" class="file-label">
+              <span class="icon">📊</span>
+              <span class="text">Excelファイルを選択</span>
+            </label>
+            <div id="excelFileName" class="file-name"></div>
+            <button id="clearExcelBtn" class="clear-btn" style="display: none;">
+              <span>❌ Excelファイルをクリア</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="upload-box">
+          <h2>2. PDFファイルをフォルダから自動検出</h2>
+          <p class="subtitle" style="font-size: 14px; color: #666;">※ フォルダを選択すると、「年間収支一覧表」と「決済明細書」を含むPDFを自動検出します</p>
+          <div class="file-input-wrapper">
+            <input type="file" id="folderInput" webkitdirectory directory multiple style="display: none;" />
+            <label for="folderInput" class="file-label" style="background: #007bff;">
+              <span class="icon">📁</span>
+              <span class="text">フォルダを選択してPDFを自動検索</span>
+            </label>
+            <div id="folderScanResult" style="margin-top: 15px; font-size: 14px;"></div>
+          </div>
+
+        </div>
+
+        <button id="uploadBtn" class="upload-btn" disabled>
+          <span class="btn-icon">🚀</span>
+          処理を開始
+        </button>
+      </div>
+
+      <div id="progressSection" class="progress-section" style="display: none;">
+        <h3>処理中...</h3>
+        <div class="progress-bar">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <p id="progressText">PDFファイルを解析しています...</p>
+      </div>
+
+      <div id="resultSection" class="result-section" style="display: none;">
+        <h3>処理結果</h3>
+        <div id="resultContent"></div>
+      </div>
+    </main>
+
+    <footer>
+      <p>© 2024 中井ソリューションズ</p>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
