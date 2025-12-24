@@ -311,7 +311,17 @@ app.post('/process-next', async (req, res) => {
       const pdfFile = pdfFiles[currentPdfIndex];
 
       try {
-        const pdfBuffer = await fs.readFile(pdfFile.path);
+        // pdfFile.pathが文字列の場合はそのまま、Bufferの場合はエラー
+        let pdfBuffer;
+        if (typeof pdfFile.path === 'string') {
+          pdfBuffer = await fs.readFile(pdfFile.path);
+        } else if (Buffer.isBuffer(pdfFile.buffer)) {
+          // Bufferが直接保存されている場合
+          pdfBuffer = pdfFile.buffer;
+        } else {
+          throw new Error('Invalid PDF file format in job data');
+        }
+
         const pdfData = await parsePDF(pdfBuffer);
         const filename = Buffer.from(pdfFile.originalname, 'latin1').toString('utf8');
         const decodedOriginalName = Buffer.from(pdfFile.originalname, 'latin1').toString('utf8');
@@ -381,7 +391,16 @@ app.post('/process-next', async (req, res) => {
         const decodedOriginalName = Buffer.from(settlementFile.originalname, 'latin1').toString('utf8');
         const folderPath = settlementPathsMap[decodedOriginalName] || '';
 
-        const settlementBuffer = await fs.readFile(settlementFile.path);
+        // ファイルパスまたはBufferを取得
+        let settlementBuffer;
+        if (typeof settlementFile.path === 'string') {
+          settlementBuffer = await fs.readFile(settlementFile.path);
+        } else if (Buffer.isBuffer(settlementFile.buffer)) {
+          settlementBuffer = settlementFile.buffer;
+        } else {
+          throw new Error('Invalid settlement PDF file format in job data');
+        }
+
         const propertyData = await parseSettlementPDF(
           settlementBuffer,
           originalFilename,
@@ -445,7 +464,16 @@ app.post('/process-next', async (req, res) => {
         const decodedOriginalName = Buffer.from(transferFile.originalname, 'latin1').toString('utf8');
         const folderPath = transferPathsMap[decodedOriginalName] || '';
 
-        const transferBuffer = await fs.readFile(transferFile.path);
+        // ファイルパスまたはBufferを取得
+        let transferBuffer;
+        if (typeof transferFile.path === 'string') {
+          transferBuffer = await fs.readFile(transferFile.path);
+        } else if (Buffer.isBuffer(transferFile.buffer)) {
+          transferBuffer = transferFile.buffer;
+        } else {
+          throw new Error('Invalid transfer PDF file format in job data');
+        }
+
         const transferData = await parseTransferPDF(
           transferBuffer,
           originalFilename,
@@ -528,10 +556,12 @@ app.post('/process-next', async (req, res) => {
       transferResults
     );
 
-    // 一時ファイルのクリーンアップ
+    // 一時ファイルのクリーンアップ（pathが文字列の場合のみ）
     for (const pdfFile of pdfFiles) {
       try {
-        await fs.unlink(pdfFile.path);
+        if (typeof pdfFile.path === 'string') {
+          await fs.unlink(pdfFile.path);
+        }
       } catch (error) {
         console.error(`ファイル削除エラー:`, error);
       }
@@ -539,7 +569,9 @@ app.post('/process-next', async (req, res) => {
 
     for (const settlementFile of settlementFiles) {
       try {
-        await fs.unlink(settlementFile.path);
+        if (typeof settlementFile.path === 'string') {
+          await fs.unlink(settlementFile.path);
+        }
       } catch (error) {
         console.error(`ファイル削除エラー:`, error);
       }
@@ -547,14 +579,18 @@ app.post('/process-next', async (req, res) => {
 
     for (const transferFile of transferFiles) {
       try {
-        await fs.unlink(transferFile.path);
+        if (typeof transferFile.path === 'string') {
+          await fs.unlink(transferFile.path);
+        }
       } catch (error) {
         console.error(`ファイル削除エラー:`, error);
       }
     }
 
     try {
-      await fs.unlink(job.data.excelPath);
+      if (typeof job.data.excelPath === 'string') {
+        await fs.unlink(job.data.excelPath);
+      }
     } catch (error) {
       console.error(`Excelファイル削除エラー:`, error);
     }
